@@ -1,5 +1,6 @@
 package com.example.textfileanalyzer;
 
+import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -11,16 +12,12 @@ import android.os.Environment;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
-import androidx.annotation.Nullable;
+
 import androidx.appcompat.app.AppCompatActivity;
 import android.os.Bundle;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -28,12 +25,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.itextpdf.text.pdf.PdfReader;
+import com.itextpdf.text.pdf.parser.PdfTextExtractor;
+
 public class MainActivity extends AppCompatActivity {
     Button selectFile,savePdf;
     private static final int REQUEST_CODE = 200;
     private String loadedContent = "";
     TextView textView;
+    EditText editText;
 
+    @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -41,6 +43,7 @@ public class MainActivity extends AppCompatActivity {
         selectFile = findViewById(R.id.selectBtn);
         textView = findViewById(R.id.displayText);
         savePdf = findViewById(R.id.savePdfBtn);
+        editText = findViewById(R.id.editTextNumberDecimal);
 
         savePdf.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -50,7 +53,16 @@ public class MainActivity extends AppCompatActivity {
                     //Toast.makeText(this,"",Toast.LENGTH_LONG).show();
                 } else {
                     String stats = generateStats(loadedContent);
-                    String randomParagraph = generateRandomParagraph(getWordFrequency(loadedContent),50,1.0);
+                    String text = editText.getText().toString();
+                    // Convert the text to a double
+                    double temp = 0.0; // Default value in case parsing fails
+                    try {
+                        temp = Double.parseDouble(text);
+                    } catch (NumberFormatException e) {
+                        // Handle the case where the text is not a valid double
+                        e.printStackTrace();
+                    }
+                    String randomParagraph = generateRandomParagraph(getWordFrequency(loadedContent),50,temp);
                     saveStatisticsToPdf(stats,randomParagraph);
                 }
             }
@@ -69,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
     private void saveStatisticsToPdf(String stats, String randomParagraph) {
         String contentToSave = stats + "\n\nRandom Paragraph:\n" + randomParagraph;
         PdfDocument pdfDocument = new PdfDocument();
-        PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(595,842,1).create();
+        PdfDocument.PageInfo pageInfo = new PdfDocument.PageInfo.Builder(1000,842,1).create();
         PdfDocument.Page page = pdfDocument.startPage(pageInfo);
 
         Canvas canvas = page.getCanvas();
@@ -101,13 +113,18 @@ public class MainActivity extends AppCompatActivity {
         List<String> words = new ArrayList<>(wordFreq.keySet());
         List<Integer> frequencies = new ArrayList<>(wordFreq.values());
         double totalFrequency = frequencies.stream().mapToInt(Integer::intValue).sum();
-        List<Double> probabilities = frequencies.stream()
-                .map(freq -> Math.pow(freq / totalFrequency, 1 / temperature))
-                .toList();
+        List<Double> probabilities = null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            probabilities = frequencies.stream()
+                    .map(freq -> Math.pow(freq / totalFrequency, 1 / temperature))
+                    .toList();
+        }
         double probabilitySum = probabilities.stream().mapToDouble(Double::doubleValue).sum();
-        probabilities = probabilities.stream()
-                .map(prob -> prob / probabilitySum)
-                .toList();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            probabilities = probabilities.stream()
+                    .map(prob -> prob / probabilitySum)
+                    .toList();
+        }
         StringBuilder paragraph = new StringBuilder();
         for (int i = 0; i < wordCount; i++) {
             double rand = Math.random();
@@ -150,23 +167,22 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadPdfFile(Uri uri) {
-        //StringBuilder pdfContent = new StringBuilder();
         try {
             InputStream inputStream = getContentResolver().openInputStream(uri);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+            PdfReader pdfReader = new PdfReader(inputStream);
             StringBuilder contentBuilder = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                contentBuilder.append(line).append("\n");
+            for (int page = 1; page <= pdfReader.getNumberOfPages(); page++) {
+                String pageContent = PdfTextExtractor.getTextFromPage(pdfReader, page).trim();
+                contentBuilder.append(pageContent).append("\n");
             }
-            reader.close();
-            inputStream.close();
-            loadedContent =contentBuilder.toString();
-            displayStatistics(loadedContent);
-        }catch (IOException e) {
-            Toast.makeText(this,"Failed to load pdf file",Toast.LENGTH_LONG).show();
-        }
+            pdfReader.close();
 
+            loadedContent = contentBuilder.toString();
+            displayStatistics(loadedContent);
+        } catch (IOException e) {
+            Toast.makeText(this, "Failed to load PDF file", Toast.LENGTH_LONG).show();
+            e.printStackTrace();
+        }
     }
 
     private void loadTextFile(Uri uri) {
@@ -199,6 +215,7 @@ public class MainActivity extends AppCompatActivity {
         Map<String, Integer> wordFreq = getWordFrequency(loadedContent);
         List<String> uniqueWords = getUniqueWords(wordFreq);
         List<Map.Entry<String, Integer>> topWords = getTopFrequentWords(wordFreq);
+        String thing = "";
         StringBuilder stats = new StringBuilder();
         stats.append("Word Count: ").append(wordCount).append("\n");
         stats.append("Sentence Count: ").append(sentenceCount).append("\n");
@@ -211,10 +228,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private List<Map.Entry<String, Integer>> getTopFrequentWords(Map<String, Integer> wordFreq) {
-        return wordFreq.entrySet().stream()
-                .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
-                .limit(5)
-                .toList();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return wordFreq.entrySet().stream()
+                    .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
+                    .limit(5)
+                    .toList();
+        }
+        return new ArrayList<>();
     }
 
 
